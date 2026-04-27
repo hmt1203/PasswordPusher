@@ -36,8 +36,22 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.ref }}
           fetch-depth: 1
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          image: tonistiigi/binfmt:master
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Parse version tag
+        id: version
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION=$(cat VERSION)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major=$(echo "$VERSION" | cut -d. -f1)" >> $GITHUB_OUTPUT
+          echo "major_minor=$(echo "$VERSION" | cut -d. -f1-2)" >> $GITHUB_OUTPUT
 
       - name: Populate Docker metadata
         id: meta
@@ -51,7 +65,10 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.version.outputs.major_minor }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.version.outputs.major }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dockerPush == 'true' }}
 
       - name: Login to DockerHub
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
@@ -65,7 +82,7 @@ jobs:
         with:
           context: .
           file: ./containers/docker/Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -83,7 +100,6 @@ jobs:
         with:
           messages_url: ${{ secrets.CAMPFIRE_MESSAGES_URL }}
           template: job_failed
-
 
   public-gateway-container:
     if: github.event.label && github.event.label.name == 'docker' || github.event_name != 'pull_request'
@@ -105,6 +121,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Parse version tag
+        id: version
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION=$(cat VERSION)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major=$(echo "$VERSION" | cut -d. -f1)" >> $GITHUB_OUTPUT
+          echo "major_minor=$(echo "$VERSION" | cut -d. -f1-2)" >> $GITHUB_OUTPUT
+
       - name: Populate Docker metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -117,7 +142,10 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.version.outputs.major_minor }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.version.outputs.major }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dockerPush == 'true' }}
 
       - name: Login to DockerHub
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
@@ -131,7 +159,7 @@ jobs:
         with:
           context: .
           file: ./containers/docker/Dockerfile.public-gateway
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -170,6 +198,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Parse version tag
+        id: version
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION=$(cat VERSION)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major=$(echo "$VERSION" | cut -d. -f1)" >> $GITHUB_OUTPUT
+          echo "major_minor=$(echo "$VERSION" | cut -d. -f1-2)" >> $GITHUB_OUTPUT
+
       - name: Populate Docker metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -182,7 +219,10 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.version.outputs.major_minor }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ steps.version.outputs.major }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dockerPush == 'true' }}
 
       - name: Login to DockerHub
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
@@ -196,7 +236,7 @@ jobs:
         with:
           context: .
           file: ./containers/docker/Dockerfile.worker
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
