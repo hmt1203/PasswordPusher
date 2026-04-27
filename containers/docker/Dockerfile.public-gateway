@@ -1,4 +1,4 @@
-FROM pglombardo/pwpush:latest
+FROM hmt1203/pwpush:latest
 
 ENV PWP_PUBLIC_GATEWAY=true
 
