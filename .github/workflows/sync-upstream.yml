@@ -21,6 +21,11 @@ jobs:
       - name: Fetch upstream
         run: git fetch upstream --tags --force
 
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Rebase master onto upstream/master
         run: |
           git rebase upstream/master || (git rebase --abort && echo "Rebase failed due to conflicts. Manual intervention required." && exit 1)
