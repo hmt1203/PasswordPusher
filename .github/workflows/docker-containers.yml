@@ -2,10 +2,6 @@
 name: Docker Container Builds
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
-
   workflow_dispatch:
     inputs:
       dockerPush:
