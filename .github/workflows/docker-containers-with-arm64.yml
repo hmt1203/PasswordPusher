@@ -1,0 +1,260 @@
+---
+name: Docker Container Builds with ARM64 Support
+
+on:
+  workflow_dispatch:
+    inputs:
+      dockerPush:
+        description: 'Push image to docker hub?'
+        required: true
+        type: boolean
+        default: false
+
+env:
+  DOCKER_PUSH: true
+jobs:
+  pwpush-container:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest release tag
+        id: latest_tag
+        run: |
+          TAG=$(git ls-remote --tags --sort='-v:refname' https://github.com/${{ github.repository }}.git 'refs/tags/v[0-9]*.[0-9]*.[0-9]*' | grep -v '\^{}' | head -1 | sed 's|.*refs/tags/||')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.latest_tag.outputs.tag }}
+          fetch-depth: 1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          image: tonistiigi/binfmt:master
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Parse version tag
+        id: version
+        run: |
+          TAG="${{ steps.latest_tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major=$(echo "$VERSION" | cut -d. -f1)" >> $GITHUB_OUTPUT
+          echo "major_minor=$(echo "$VERSION" | cut -d. -f1-2)" >> $GITHUB_OUTPUT
+
+      - name: Populate Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/pwpush
+          tags: |
+            type=match,pattern=stable
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ steps.version.outputs.major_minor }}
+            type=raw,value=${{ steps.version.outputs.major }}
+            type=raw,value=latest,enable=${{ github.event.inputs.dockerPush == 'true' }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./containers/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: |
+            type=registry,ref=${{ secrets.DOCKER_USERNAME }}/pwpush:buildcache
+            type=gha
+          cache-to: |
+            type=registry,ref=${{ secrets.DOCKER_USERNAME }}/pwpush:buildcache,mode=max,ignore-error=${{env.DOCKER_PUSH == 'false'}}
+            type=gha,mode=max
+
+      - name: Post job failure details to Campfire
+        if: failure() && github.ref == 'refs/heads/master'
+        continue-on-error: true
+        uses: shane-lamb/campfire-notify-action@v1.1.6
+        with:
+          messages_url: ${{ secrets.CAMPFIRE_MESSAGES_URL }}
+          template: job_failed
+
+  public-gateway-container:
+    if: always()
+    needs: pwpush-container
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest release tag
+        id: latest_tag
+        run: |
+          TAG=$(git ls-remote --tags --sort='-v:refname' https://github.com/${{ github.repository }}.git 'refs/tags/v[0-9]*.[0-9]*.[0-9]*' | grep -v '\^{}' | head -1 | sed 's|.*refs/tags/||')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.latest_tag.outputs.tag }}
+          fetch-depth: 1
+
+      - name: Patch base image to arm64-compatible image
+        run: sed -i 's|FROM pglombardo/pwpush:latest|FROM ${{ secrets.DOCKER_USERNAME }}/pwpush:latest|' containers/docker/Dockerfile.public-gateway
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          image: tonistiigi/binfmt:master
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Parse version tag
+        id: version
+        run: |
+          TAG="${{ steps.latest_tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major=$(echo "$VERSION" | cut -d. -f1)" >> $GITHUB_OUTPUT
+          echo "major_minor=$(echo "$VERSION" | cut -d. -f1-2)" >> $GITHUB_OUTPUT
+
+      - name: Populate Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/pwpush-public-gateway
+          tags: |
+            type=match,pattern=stable
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ steps.version.outputs.major_minor }}
+            type=raw,value=${{ steps.version.outputs.major }}
+            type=raw,value=latest,enable=${{ github.event.inputs.dockerPush == 'true' }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./containers/docker/Dockerfile.public-gateway
+          platforms: linux/amd64,linux/arm64
+          push: true
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: |
+            type=registry,ref=${{ secrets.DOCKER_USERNAME }}/pwpush:buildcache
+            type=registry,ref=${{ secrets.DOCKER_USERNAME }}/pwpush-public-gateway:buildcache
+            type=gha
+          cache-to: |
+            type=registry,ref=${{ secrets.DOCKER_USERNAME }}/pwpush-public-gateway:buildcache,mode=max,ignore-error=${{env.DOCKER_PUSH == 'false'}}
+            type=gha,mode=max
+
+      - name: Post job failure details to Campfire
+        if: failure() && github.ref == 'refs/heads/master'
+        continue-on-error: true
+        uses: shane-lamb/campfire-notify-action@v1.1.6
+        with:
+          messages_url: ${{ secrets.CAMPFIRE_MESSAGES_URL }}
+          template: job_failed
+
+  worker-container:
+    if: always()
+    needs: pwpush-container
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest release tag
+        id: latest_tag
+        run: |
+          TAG=$(git ls-remote --tags --sort='-v:refname' https://github.com/${{ github.repository }}.git 'refs/tags/v[0-9]*.[0-9]*.[0-9]*' | grep -v '\^{}' | head -1 | sed 's|.*refs/tags/||')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.latest_tag.outputs.tag }}
+          fetch-depth: 1
+
+      - name: Patch base image to arm64-compatible image
+        run: sed -i 's|FROM pglombardo/pwpush:latest|FROM ${{ secrets.DOCKER_USERNAME }}/pwpush:latest|' containers/docker/Dockerfile.worker
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          image: tonistiigi/binfmt:master
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Parse version tag
+        id: version
+        run: |
+          TAG="${{ steps.latest_tag.outputs.tag }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major=$(echo "$VERSION" | cut -d. -f1)" >> $GITHUB_OUTPUT
+          echo "major_minor=$(echo "$VERSION" | cut -d. -f1-2)" >> $GITHUB_OUTPUT
+
+      - name: Populate Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/pwpush-worker
+          tags: |
+            type=match,pattern=stable
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ steps.version.outputs.major_minor }}
+            type=raw,value=${{ steps.version.outputs.major }}
+            type=raw,value=latest,enable=${{ github.event.inputs.dockerPush == 'true' }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./containers/docker/Dockerfile.worker
+          platforms: linux/amd64,linux/arm64
+          push: true
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: |
+            type=registry,ref=${{ secrets.DOCKER_USERNAME }}/pwpush:buildcache
+            type=registry,ref=${{ secrets.DOCKER_USERNAME }}/pwpush-worker:buildcache
+            type=gha
+          cache-to: |
+            type=registry,ref=${{ secrets.DOCKER_USERNAME }}/pwpush-worker:buildcache,mode=max,ignore-error=${{env.DOCKER_PUSH == 'false'}}
+            type=gha,mode=max
+
+      - name: Post job failure details to Campfire
+        if: failure() && github.ref == 'refs/heads/master'
+        continue-on-error: true
+        uses: shane-lamb/campfire-notify-action@v1.1.6
+        with:
+          messages_url: ${{ secrets.CAMPFIRE_MESSAGES_URL }}
+          template: job_failed
